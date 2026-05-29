@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>菜品对决 Demo v2 — 共享圆桌</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Microsoft YaHei', sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* === 整体布局 === */
+#game-container {
+  display: grid;
+  grid-template-columns: 1fr 540px 260px;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 12px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px;
+  height: 100vh;
+}
+
+/* === 顶部状态栏 === */
+#top-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #16213e;
+  border-radius: 8px;
+  padding: 10px 20px;
+}
+#turn-info {
+  font-size: 14px;
+  text-align: center;
+}
+#ap-display {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.ap-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0f3460;
+  border: 2px solid #e94560;
+}
+.ap-dot.filled { background: #e94560; }
+.ap-dot.npc-dot { border-color: #4ecdc4; }
+.ap-dot.npc-dot.filled { background: #4ecdc4; }
+
+/* === 左侧：信息面板 === */
+#info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+#info-panel h3 {
+  font-size: 14px;
+  color: #aaa;
+  padding: 4px 0;
+}
+#dish-pool-info {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.6;
+}
+
+/* === 中间：圆桌 === */
+#table-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* 角色档案卡 */
+.profile-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #16213e;
+  border-radius: 10px;
+  min-width: 200px;
+}
+.profile-card.active-turn {
+  border: 2px solid #ffd700;
+  box-shadow: 0 0 12px rgba(255,215,0,0.3);
+}
+.profile-avatar { font-size: 32px; line-height: 1; }
+.profile-name { font-size: 13px; font-weight: bold; color: #eee; }
+.profile-satiety {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+}
+.satiety-track {
+  width: 180px; height: 20px; background: #0f3460;
+  border-radius: 10px; overflow: hidden; position: relative;
+}
+.satiety-track.small { width: 100px; height: 10px; }
+.satiety-fill {
+  height: 100%; border-radius: 10px; transition: width 0.4s ease;
+}
+.satiety-fill.player { background: linear-gradient(90deg, #e94560, #ff6b6b); }
+.satiety-fill.npc { background: linear-gradient(90deg, #4ecdc4, #44bd9e); }
+.satiety-text {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; font-weight: bold; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+}
+.satiety-text.small {
+  position: static; transform: none; font-size: 11px; color: #aaa;
+}
+.combo-badge {
+  font-size: 14px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #0f3460;
+  color: #888;
+  transition: all 0.3s ease;
+  min-width: 40px;
+  text-align: center;
+}
+.combo-badge.active {
+  background: #ffd700;
+  color: #1a1a2e;
+  box-shadow: 0 0 8px rgba(255,215,0,0.5);
+}
+.combo-badge.max {
+  background: #ff6b35;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255,107,53,0.6);
+  animation: comboPulse 0.6s ease-in-out infinite alternate;
+}
+@keyframes comboPulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.1); }
+}
+
+#table-wrapper {
+  position: relative;
+  width: 500px;
+  height: 500px;
+}
+
+#table-circle {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #2d1b00 0%, #1a1000 100%);
+  border: 4px solid #8b6914;
+  position: relative;
+  cursor: grab;
+  user-select: none;
+}
+#table-circle.dragging { cursor: grabbing; }
+#table-circle.no-drag { cursor: default; }
+
+#slots-container { position: absolute; inset: 0; }
+#pair-lines { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+#pair-lines line {
+  stroke: rgba(255, 215, 0, 0.2);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+#pair-lines line.pair-active {
+  stroke: rgba(255, 215, 0, 0.5);
+  stroke-width: 2;
+}
+
+/* 分割线 - removed, no longer split */
+#divider-line { display: none; }
+
+/* 拖拽吸附指示器 */
+#snap-indicator {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  text-align: center;
+  z-index: 20;
+}
+#snap-indicator.show { opacity: 1; }
+.snap-steps {
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffd700;
+  text-shadow: 0 0 12px rgba(255,215,0,0.6);
+  line-height: 1.2;
+}
+.snap-steps.zero { color: #666; text-shadow: none; }
+
+/* 桌上的菜品格子 */
+.table-slot {
+  position: absolute;
+  width: 76px; height: 86px;
+  border-radius: 8px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-size: 12px; text-align: center;
+  cursor: pointer;
+  transition: filter 0.2s;
+  border: 2px solid transparent;
+  gap: 0; padding: 2px;
+  /* position:absolute already set, range labels use this as containing block */
+}
+.table-slot:hover { filter: brightness(1.2); }
+.table-slot { background: rgba(139, 105, 20, 0.12); }
+.table-slot.empty { border: 2px dashed rgba(255,255,255,0.2); }
+.table-slot.has-dish { border: 2px solid rgba(255,255,255,0.4); }
+.table-slot.mouth-slot {
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
+  border: 2px solid rgba(255, 215, 0, 0.6) !important;
+}
+.table-slot.mouth-slot::after {
+  content: '👄';
+  position: absolute;
+  font-size: 14px;
+  bottom: -8px;
+  right: -4px;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.8));
+}
+
+.slot-dish-name {
+  font-size: 11px; font-weight: bold;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 74px;
+}
+.slot-flavor-icons {
+  font-size: 12px; line-height: 1; margin-top: 1px;
+}
+.slot-dish-satiety {
+  font-size: 16px; font-weight: bold; margin-top: 2px; color: #ffd700;
+}
+
+.slot-tags { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; margin-top: 1px; }
+.slot-tag { font-size: 8px; padding: 0 3px; border-radius: 2px; line-height: 12px; }
+.slot-tag.flavor-咸鲜 { background: #8b4513; }
+.slot-tag.flavor-甜 { background: #d4508b; }
+.slot-tag.flavor-酸 { background: #7fb069; }
+.slot-tag.flavor-辣 { background: #c0392b; }
+.slot-tag.category { background: #2c3e50; }
+
+.table-slot .dish-img { width: 48px; height: 42px; font-size: 14px; }
+
+/* === 操作按钮区 === */
+#action-bar {
+  grid-column: 1 / -1;
+  display: flex; justify-content: center; align-items: center;
+  gap: 12px; padding: 10px;
+  background: #16213e; border-radius: 8px;
+}
+.action-btn {
+  padding: 10px 20px; border: none; border-radius: 6px;
+  font-size: 14px; font-weight: bold; cursor: pointer;
+  transition: all 0.2s; font-family: inherit;
+}
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.action-btn.end-turn { background: #0f3460; color: #aaa; border: 1px solid #aaa; }
+.action-btn.end-turn:hover:not(:disabled) { background: #1a4a8a; color: #fff; }
+
+/* === 右侧：战斗日志 === */
+#log-panel {
+  background: #16213e; border-radius: 8px; padding: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#log-panel h3 { font-size: 13px; color: #aaa; margin-bottom: 8px; flex-shrink: 0; }
+#log-list {
+  flex: 1; overflow-y: auto; font-size: 12px; line-height: 1.6;
+}
+#log-list .log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+#log-list .log-entry.damage { color: #e94560; }
+#log-list .log-entry.combo { color: #ff6b35; font-weight: bold; }
+#log-list .log-entry.heal { color: #4ecdc4; }
+#log-list .log-entry.effect { color: #ffd700; }
+#log-list .log-entry.turn { color: #888; font-style: italic; }
+
+/* === 游戏结束遮罩 === */
+#game-over-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.8);
+  justify-content: center; align-items: center;
+  flex-direction: column; gap: 20px; z-index: 100;
+}
+#game-over-overlay.show { display: flex; }
+#game-over-overlay h1 { font-size: 48px; }
+#game-over-overlay .win { color: #ffd700; }
+#game-over-overlay .lose { color: #e94560; }
+#game-over-overlay button {
+  padding: 12px 32px; font-size: 18px; border: none; border-radius: 8px;
+  background: #e94560; color: white; cursor: pointer; font-family: inherit;
+}
+
+/* === 提示浮层 === */
+.tooltip {
+  display: none; position: fixed;
+  background: #16213e; border: 1px solid #4ecdc4;
+  border-radius: 6px; padding: 8px 12px;
+  font-size: 12px; z-index: 100; max-width: 220px;
+  pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  line-height: 1.4;
+}
+.tooltip.show { display: block; }
+
+/* === 旋转预览面板 - 已移除 === */
+
+/* === 伤害浮动数字 === */
+.damage-float {
+  position: absolute; font-size: 22px; font-weight: bold;
+  pointer-events: none; z-index: 60;
+  animation: floatUp 1.2s ease-out forwards;
+}
+.damage-float.npc-dmg { color: #4ecdc4; }
+.damage-float.player-dmg { color: #e94560; }
+@keyframes floatUp {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  60% { opacity: 1; transform: translateY(-30px) scale(1.2); }
+  100% { opacity: 0; transform: translateY(-50px) scale(0.8); }
+}
+
+/* === 菜品图片占位 === */
+.dish-img {
+  width: 50px; height: 43px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; overflow: hidden;
+}
+.dish-img img { width: 100%; height: 100%; object-fit: cover; }
+
+/* === 操作提示 === */
+#action-hint {
+  font-size: 12px; color: #888;
+}
+</style>
+</head>
+<body>
+
+<div id="game-over-overlay">
+  <h1 id="game-over-text"></h1>
+  <button onclick="restartGame()">再来一局</button>
+</div>
+
+<div id="game-container">
+  <div id="top-bar">
+    <div id="turn-info">
+      <div>回合 <span id="turn-num">1</span></div>
+      <div id="phase-text">等待中...</div>
+      <div id="ap-display"></div>
+    </div>
+  </div>
+
+  <!-- 左侧：信息面板 -->
+  <div id="info-panel">
+    <h3>共享圆桌规则</h3>
+    <div id="dish-pool-info">
+      10格共享圆环，双方嘴位相隔180°<br>
+      每回合4AP，唯一操作：转桌（转N格=NAP）<br>
+      转桌后双方同时吃嘴位上的菜，饱食度先满50输<br>
+      <br>
+      <strong style="color:#ffd700">⚡ 口味连击（核心）</strong>：<br>
+      连续吃到有<em>共同口味</em>的菜：×1→<span style="color:#ff6b6b">×2</span>→<span style="color:#ff0000">×3</span><br>
+      无共同口味则断链回×1<br>
+      <br>
+      <strong style="color:#e74c3c">👊 NPC规则</strong>：<br>
+      NPC每回合转±1步，永远选让你吃更重的菜的方向<br>
+      <small>（看你嘴位左右两格，哪个重转哪边——100%可预测）</small><br>
+      <br>
+      <strong style="color:#4ecdc4">🎯 策略</strong>：<br>
+      ① 找链：哪个方向能让NPC连吃同口味？<br>
+      ② 算代价：我自己吃多少？NPC接下来会喂我什么？
+    </div>
+  </div>
+
+  <!-- 中间：圆桌 + 角色档案 -->
+  <div id="table-area">
+    <div id="profile-npc" class="profile-card">
+      <div class="profile-avatar">👹</div>
+      <div class="profile-info">
+        <div class="profile-name">对手</div>
+        <div class="profile-satiety">
+          <div class="satiety-track small">
+            <div class="satiety-fill npc" id="npc-satiety-fill"></div>
+          </div>
+          <span class="satiety-text small" id="npc-satiety-text">0/15</span>
+        </div>
+      </div>
+      <div class="combo-badge" id="npc-combo-badge">×1</div>
+    </div>
+
+    <div id="table-wrapper">
+      <div id="table-circle">
+        <svg id="pair-lines" width="500" height="500"></svg>
+        <div id="divider-line"></div>
+        <div id="snap-indicator"></div>
+      </div>
+    </div>
+
+    <div id="profile-player" class="profile-card">
+      <div class="profile-avatar">🧑‍🍳</div>
+      <div class="profile-info">
+        <div class="profile-name">玩家</div>
+        <div class="profile-satiety">
+          <div class="satiety-track small">
+            <div class="satiety-fill player" id="player-satiety-fill"></div>
+          </div>
+          <span class="satiety-text small" id="player-satiety-text">0/15</span>
+        </div>
+      </div>
+      <div class="combo-badge" id="player-combo-badge">×1</div>
+    </div>
+  </div>
+
+  <!-- 右侧：战斗日志 -->
+  <div id="log-panel">
+    <h3>战斗日志</h3>
+    <div id="log-list"></div>
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div id="action-bar">
+    <span id="action-hint">拖动圆盘旋转</span>
+    <button class="action-btn end-turn" id="btn-end-turn" onclick="onEndTurn()">结束回合</button>
+  </div>
+
+  <div id="rotation-preview" style="display:none"></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+// ============================================================
+// 常量
+// ============================================================
+const MAX_SATIETY = 50;
+const AP_PER_TURN = 4;
+const TOTAL_SLOTS = 10;
+const MAX_ROTATION_STEPS = 5;
+
+// 10 slots at 36° intervals on the ring
+// Slot 0 = NPC mouth (-90°, top), Slot 5 = Player mouth (90°, bottom)
+const RING_ANGLES = [-90, -126, -162, 162, 126, 90, 54, 18, -18, -54];
+// NPC mouth = ring index 0, Player mouth = ring index 5
+
+const NPC_MOUTH = 0;
+const PLAYER_MOUTH = 5;
+
+// ============================================================
+// 效果类型
+// ============================================================
+const EffectType = {
+  NONE: 'none',
+  POSITION_BUFF: 'position_buff',
+  POSITION_EXTRA_ROTATE: 'position_extra_rotate',
+};
+
+// ============================================================
+// 全局连击系统（口味连击）
+// ============================================================
+const COMBO_MULTIPLIERS = [1, 2, 3];
+
+function getComboMultiplier(combo) {
+  return COMBO_MULTIPLIERS[Math.min(combo.hits, 2)];
+}
+
+function advanceCombo(combo, dish) {
+  if (!combo.lastFlavors) {
+    // 首次吃——基线，无连击
+    combo.lastFlavors = dish.flavors;
+    combo.hits = 0;
+    combo.multiplier = COMBO_MULTIPLIERS[0];
+  } else if (combo.lastFlavors.some(f => dish.flavors.includes(f))) {
+    // 有共同口味 → 连击递增
+    combo.lastFlavors = dish.flavors;
+    combo.hits = Math.min(combo.hits + 1, 2);
+    combo.multiplier = COMBO_MULTIPLIERS[combo.hits];
+  } else {
+    // 无共同口味 → 断链
+    combo.lastFlavors = dish.flavors;
+    combo.hits = 0;
+    combo.multiplier = COMBO_MULTIPLIERS[0];
+  }
+}
+
+function resetCombo(combo) {
+  combo.lastFlavors = null;
+  combo.multiplier = 1;
+  combo.hits = 0;
+}
+
+// ============================================================
+// 菜品池（共享，系统从中随机填充）
+// ============================================================
+const DISH_POOL = [
+  // 主食 4
+  { id: 'jianbing', name: '煎饼果子', satiety: 2, flavors: ['咸鲜', '辣'], category: '主食', effect: { type: EffectType.NONE } },
+  { id: 'baozi', name: '包子', satiety: 3, flavors: ['咸鲜'], category: '主食', effect: { type: EffectType.NONE } },
+  { id: 'dabing', name: '大饼', satiety: 2, flavors: ['咸鲜'], category: '主食', effect: { type: EffectType.NONE } },
+  { id: 'mahua', name: '麻花', satiety: 3, flavors: ['甜', '咸鲜'], category: '主食', effect: { type: EffectType.NONE } },
+  // 热菜 4
+  { id: 'tangcuxiaopai', name: '糖醋小排', satiety: 5, flavors: ['酸', '甜'], category: '热菜', effect: { type: EffectType.NONE } },
+  { id: 'hongshaozhouzi', name: '红烧肘子', satiety: 7, flavors: ['咸鲜', '甜'], category: '热菜', effect: { type: EffectType.NONE } },
+  { id: 'shaoji', name: '烧鸡', satiety: 6, flavors: ['咸鲜', '辣'], category: '热菜', effect: { type: EffectType.NONE } },
+  { id: 'jiangniurou', name: '酱牛肉', satiety: 5, flavors: ['咸鲜', '辣'], category: '热菜', effect: { type: EffectType.NONE } },
+  // 凉菜 3
+  { id: 'banliangcai', name: '拌凉菜', satiety: 1, flavors: ['酸', '辣'], category: '凉菜', effect: { type: EffectType.NONE } },
+  { id: 'paihuanggua', name: '拍黄瓜', satiety: 2, flavors: ['酸', '咸鲜'], category: '凉菜', effect: { type: EffectType.NONE } },
+  { id: 'pidandoufu', name: '皮蛋豆腐', satiety: 3, flavors: ['咸鲜'], category: '凉菜', effect: { type: EffectType.NONE } },
+  // 甜品 3
+  { id: 'zhagao', name: '炸糕', satiety: 3, flavors: ['甜'], category: '甜品', effect: { type: EffectType.NONE } },
+  { id: 'babaofan', name: '八宝饭', satiety: 4, flavors: ['甜'], category: '甜品', effect: { type: EffectType.POSITION_BUFF, bonus: 2, desc: '相邻两道菜本次+2' } },
+  { id: 'shanzhajuan', name: '山楂卷', satiety: 2, flavors: ['酸', '甜'], category: '甜品', effect: { type: EffectType.NONE } },
+  // 汤 3
+  { id: 'suanlatang', name: '酸辣汤', satiety: 3, flavors: ['酸', '辣'], category: '汤', effect: { type: EffectType.NONE } },
+  { id: 'chatang', name: '茶汤', satiety: 1, flavors: ['甜'], category: '汤', effect: { type: EffectType.POSITION_BUFF, bonus: 2, desc: '相邻两道菜本次+2' } },
+  { id: 'zicaidanhua', name: '紫菜蛋花汤', satiety: 2, flavors: ['咸鲜', '酸'], category: '汤', effect: { type: EffectType.NONE } },
+];
+
+// ============================================================
+// 工具函数
+// ============================================================
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function cloneDish(dish) {
+  return { ...dish, effect: { ...dish.effect } };
+}
+
+function randomDish() {
+  return cloneDish(DISH_POOL[Math.floor(Math.random() * DISH_POOL.length)]);
+}
+
+// ============================================================
+// 游戏状态
+// ============================================================
+function createGameState() {
+  // 10-slot ring, indices 0-9
+  // Slot 0 = NPC mouth, Slot 5 = Player mouth
+  const slots = new Array(TOTAL_SLOTS).fill(null);
+
+  return {
+    playerSatiety: 0,
+    npcSatiety: 0,
+    slots: slots,
+    ap: AP_PER_TURN,
+    turn: 1,
+    // 'player_action' | 'npc_action' | 'refill' | 'game_over'
+    phase: 'player_action',
+    npcCombo: { lastFlavors: null, multiplier: 1, hits: 0 },
+    playerCombo: { lastFlavors: null, multiplier: 1, hits: 0 },
+    positionBuffs: [],
+    result: null,
+    log: [],
+    visualAngle: 0,
+  };
+}
+
+// ============================================================
+// 核心逻辑
+// ============================================================
+
+function getAdjacentIndices(ri) {
+  return {
+    left: (ri - 1 + TOTAL_SLOTS) % TOTAL_SLOTS,
+    right: (ri + 1) % TOTAL_SLOTS,
+  };
+}
+
+// Rotate ring: positive = clockwise (dishes shift CW, effectively what's at mouth changes)
+function rotateRing(state, steps) {
+  const s = ((steps % TOTAL_SLOTS) + TOTAL_SLOTS) % TOTAL_SLOTS;
+  if (s === 0) return;
+  const old = [...state.slots];
+  for (let i = 0; i < TOTAL_SLOTS; i++) {
+    state.slots[i] = old[(i + s) % TOTAL_SLOTS];
+  }
+}
+
+// Execute one rotation: rotate, then both mouths eat
+function executeRotation(state, steps) {
+  const report = { steps, npcAte: [], playerAte: [], positionEffects: [] };
+
+  rotateRing(state, steps);
+
+  // Position buff: if mouth dish has POSITION_BUFF, boost adjacent (lasts until turn end)
+  for (const mouthIdx of [NPC_MOUTH, PLAYER_MOUTH]) {
+    const dish = state.slots[mouthIdx];
+    if (dish && dish.effect.type === EffectType.POSITION_BUFF) {
+      const { left, right } = getAdjacentIndices(mouthIdx);
+      for (const adjIdx of [left, right]) {
+        if (state.slots[adjIdx]) {
+          state.slots[adjIdx].satiety += dish.effect.bonus;
+          state.positionBuffs.push({ idx: adjIdx, amount: dish.effect.bonus });
+        }
+      }
+      report.positionEffects.push(`${dish.name}：相邻菜品+${dish.effect.bonus}（持续到回合结束）`);
+    }
+  }
+
+  // NPC mouth eats (slot 0) — apply combo
+  const npcDish = state.slots[NPC_MOUTH];
+  if (npcDish) {
+    advanceCombo(state.npcCombo, npcDish);
+    const multiplier = getComboMultiplier(state.npcCombo);
+    const baseDmg = npcDish.satiety;
+    const dmg = Math.ceil(baseDmg * multiplier);
+    state.npcSatiety += dmg;
+    state.slots[NPC_MOUTH] = null;
+    const comboText = multiplier > 1 ? `×${multiplier}连击` : '';
+    report.npcAte.push({ dish: cloneDish(npcDish), damage: dmg, baseDmg, multiplier, comboText });
+  }
+
+  // Player mouth eats (slot 5) — apply combo
+  const playerDish = state.slots[PLAYER_MOUTH];
+  if (playerDish) {
+    advanceCombo(state.playerCombo, playerDish);
+    const multiplier = getComboMultiplier(state.playerCombo);
+    const baseDmg = playerDish.satiety;
+    const dmg = Math.ceil(baseDmg * multiplier);
+    state.playerSatiety += dmg;
+    state.slots[PLAYER_MOUTH] = null;
+    const comboText = multiplier > 1 ? `×${multiplier}连击` : '';
+    report.playerAte.push({ dish: cloneDish(playerDish), damage: dmg, baseDmg, multiplier, comboText });
+  }
+
+  checkGameOver(state);
+
+  return report;
+}
+
+function checkGameOver(state) {
+  if (state.npcSatiety >= MAX_SATIETY) { state.result = 'player_win'; state.phase = 'game_over'; }
+  if (state.playerSatiety >= MAX_SATIETY) { state.result = 'npc_win'; state.phase = 'game_over'; }
+}
+
+// ============================================================
+// 行动函数
+// ============================================================
+
+// Rotate (costs |steps| AP — 1 AP per step)
+function doRotate(state, steps) {
+  if (steps === 0 || Math.abs(steps) > MAX_ROTATION_STEPS) return null;
+  const cost = Math.abs(steps);
+  if (state.ap < cost) return null;
+
+  state.ap -= cost;
+  const report = executeRotation(state, steps);
+
+  const dir = steps > 0 ? '顺时针' : '逆时针';
+  state.log.push(`转桌${dir}${Math.abs(steps)}格！(消耗${cost}AP)`);
+  for (const eat of report.npcAte) {
+    let msg = eat.multiplier > 1
+      ? `  → NPC吃到${eat.dish.name}，饱食${eat.baseDmg}×${eat.multiplier}=+${eat.damage} 连击!`
+      : `  → NPC吃到${eat.dish.name}，饱食+${eat.damage}`;
+    state.log.push(msg);
+  }
+  for (const eat of report.playerAte) {
+    let msg = eat.multiplier > 1
+      ? `  → 玩家吃到${eat.dish.name}，饱食${eat.baseDmg}×${eat.multiplier}=+${eat.damage} 连击!`
+      : `  → 玩家吃到${eat.dish.name}，饱食+${eat.damage}`;
+    state.log.push(msg);
+  }
+  for (const pe of report.positionEffects) {
+    state.log.push(`  ★ ${pe}`);
+  }
+  if (report.npcAte.length === 0 && report.playerAte.length === 0) {
+    state.log.push('  （双方嘴位都是空的）');
+  }
+  state.log.push(`  饱食度 — 玩家:${state.playerSatiety}/${MAX_SATIETY} NPC:${state.npcSatiety}/${MAX_SATIETY}`);
+
+  return report;
+}
+
+// Fill empty slots with random dishes
+function refillTable(state) {
+  for (let i = 0; i < TOTAL_SLOTS; i++) {
+    if (state.slots[i] === null) {
+      state.slots[i] = randomDish();
+    }
+  }
+}
+
+// ============================================================
+// NPC AI — 确定性±1规则
+// "永远转向让玩家嘴位吃到更重的菜的方向"
+// ============================================================
+function npcTurn(state) {
+  state.phase = 'npc_action';
+  state.ap = 1; // NPC only needs 1 AP for its single ±1 rotation
+  state.log.push(`--- NPC回合 ---`);
+
+  // NPC 看玩家嘴位两侧（±1步后会到达玩家嘴位的菜）
+  const cwSlot = (PLAYER_MOUTH + 1) % TOTAL_SLOTS;
+  const ccwSlot = (PLAYER_MOUTH - 1 + TOTAL_SLOTS) % TOTAL_SLOTS;
+  const cwDish = state.slots[cwSlot];
+  const ccwDish = state.slots[ccwSlot];
+  const cwValue = cwDish ? cwDish.satiety : 0;
+  const ccwValue = ccwDish ? ccwDish.satiety : 0;
+
+  if (cwValue === 0 && ccwValue === 0) {
+    state.log.push(`NPC: 玩家嘴位两侧皆空，不转`);
+  } else {
+    const steps = cwValue >= ccwValue ? 1 : -1;
+    const targetDish = steps === 1 ? cwDish : ccwDish;
+    state.log.push(`NPC: 转${steps > 0 ? '顺' : '逆'}时针1步 → 喂你吃${targetDish ? targetDish.name : '空'}`);
+    const report = doRotate(state, steps);
+    if (report) {
+      for (const eat of report.npcAte) {
+        showDamageFloat(NPC_MOUTH, eat.damage, true);
+      }
+      for (const eat of report.playerAte) {
+        showDamageFloat(PLAYER_MOUTH, eat.damage, false);
+      }
+    }
+  }
+
+  state.log.push(`--- NPC回合结束 ---`);
+}
+
+// ============================================================
+// 回合流程
+// ============================================================
+function initGame() {
+  const state = createGameState();
+
+  // Fill all 10 slots with random dishes
+  for (let i = 0; i < TOTAL_SLOTS; i++) {
+    state.slots[i] = randomDish();
+  }
+
+  state.phase = 'player_action';
+  state.ap = AP_PER_TURN;
+  state.log.push('=== 对决开始！共享圆桌模式 ===');
+  state.log.push('桌面已摆满10道菜，你先行动！');
+
+  return state;
+}
+
+function endPlayerTurn(state) {
+  if (state.phase !== 'player_action' || state.result) return;
+  for (const pb of state.positionBuffs) {
+    if (state.slots[pb.idx]) state.slots[pb.idx].satiety -= pb.amount;
+  }
+  state.positionBuffs = [];
+  state.log.push(`--- 玩家回合${state.turn}结束 ---`);
+  state.phase = 'npc_action';
+}
+
+function endNpcTurn(state) {
+  for (const pb of state.positionBuffs) {
+    if (state.slots[pb.idx]) state.slots[pb.idx].satiety -= pb.amount;
+  }
+  state.positionBuffs = [];
+  state.phase = 'refill';
+  refillTable(state);
+  const filled = state.slots.filter(s => s !== null).length;
+  state.log.push(`系统补菜完成，桌上${filled}道菜`);
+  state.turn += 1;
+  state.ap = AP_PER_TURN;
+  resetCombo(state.npcCombo);
+  resetCombo(state.playerCombo);
+  state.phase = 'player_action';
+}
+
+// ============================================================
+// UI
+// ============================================================
+let game = null;
+
+const DISH_IMG = {
+  'jianbing': '../resources/dish1.png',
+  'baozi': '../resources/dish4.png',
+  'dabing': '../resources/dish5.png',
+  'mahua': '../resources/dish10.png',
+  'tangcuxiaopai': '../resources/dish3.png',
+  'hongshaozhouzi': '../resources/dish2.png',
+  'shaoji': '../resources/dish11.png',
+  'jiangniurou': '../resources/dish6.png',
+  'banliangcai': '../resources/dish7.png',
+  'paihuanggua': '../resources/dish7.png',
+  'pidandoufu': '../resources/dish8.png',
+  'zhagao': '../resources/dish5.png',
+  'babaofan': '../resources/dish8.png',
+  'shanzhajuan': '../resources/dish12.png',
+  'suanlatang': '../resources/dish9.png',
+  'chatang': '../resources/dish9.png',
+  'zicaidanhua': '../resources/dish9.png',
+};
+const DISH_EMOJI = {};
+
+function getDishImgHtml(dishId, size) {
+  const imgPath = DISH_IMG[dishId];
+  if (imgPath) {
+    const w = size === 'small' ? 48 : 70;
+    const h = size === 'small' ? 42 : 60;
+    return `<img src="${imgPath}" style="width:${w}px;height:${h}px;object-fit:cover;border-radius:4px;">`;
+  }
+  return '🍽️';
+}
+
+function getSlotPosition(ringIndex, angleOffset = 0) {
+  const cx = 250, cy = 250, r = 160;
+  let angle = RING_ANGLES[ringIndex] + angleOffset;
+  const rad = angle * Math.PI / 180;
+  return {
+    x: cx + r * Math.cos(rad) - 38,
+    y: cy + r * Math.sin(rad) - 43,
+  };
+}
+
+function renderTable() {
+  const circle = document.getElementById('table-circle');
+  let slotsContainer = document.getElementById('slots-container');
+  if (!slotsContainer) {
+    slotsContainer = document.createElement('div');
+    slotsContainer.id = 'slots-container';
+    circle.appendChild(slotsContainer);
+  }
+  slotsContainer.innerHTML = '';
+
+  for (let i = 0; i < TOTAL_SLOTS; i++) {
+    const pos = getSlotPosition(i, game.visualAngle);
+    const dish = game.slots[i];
+    const isMouth = (i === NPC_MOUTH || i === PLAYER_MOUTH);
+    const slot = document.createElement('div');
+
+    slot.className = `table-slot ${dish ? 'has-dish' : 'empty'} ${isMouth ? 'mouth-slot' : ''}`;
+    slot.style.left = pos.x + 'px';
+    slot.style.top = pos.y + 'px';
+    slot.dataset.index = i;
+
+    if (dish) {
+      const FLAVOR_ICON = { '咸鲜': '🧂', '甜': '🍬', '酸': '🍋', '辣': '🌶' };
+      const flavorIcons = dish.flavors.map(f => FLAVOR_ICON[f] || '').join('');
+      const slotTags = dish.flavors.map(f => `<span class="slot-tag flavor-${f}">${f}</span>`).join('') +
+                       `<span class="slot-tag category">${dish.category}</span>`;
+      slot.innerHTML = `
+        <div class="dish-img">${getDishImgHtml(dish.id, 'small')}</div>
+        <span class="slot-dish-name">${dish.name}</span>
+        <div class="slot-flavor-icons">${flavorIcons}</div>
+        <div class="slot-tags">${slotTags}</div>
+        <span class="slot-dish-satiety">${dish.satiety}</span>
+      `;
+    } else {
+      slot.innerHTML = `<span style="opacity:0.3">空</span>`;
+    }
+
+    slot.onclick = () => onSlotClick(i);
+    if (dish) {
+      slot.addEventListener('mouseenter', (e) => showDishTooltip(e, dish));
+      slot.addEventListener('mousemove', moveDishTooltip);
+      slot.addEventListener('mouseleave', hideDishTooltip);
+    }
+    slotsContainer.appendChild(slot);
+  }
+
+  // Draw connecting lines between opposite slots (5 apart = eaten together)
+  renderPairLines(game.visualAngle);
+}
+
+function renderPairLines(angleOffset) {
+  const svg = document.getElementById('pair-lines');
+  const cx = 250, cy = 250, r = 160;
+  let lines = '';
+  for (let i = 0; i < 5; i++) {
+    const j = i + 5; // opposite slot
+    const bothHaveDish = game.slots[i] && game.slots[j];
+    const angleI = (RING_ANGLES[i] + angleOffset) * Math.PI / 180;
+    const angleJ = (RING_ANGLES[j] + angleOffset) * Math.PI / 180;
+    const x1 = cx + r * Math.cos(angleI);
+    const y1 = cy + r * Math.sin(angleI);
+    const x2 = cx + r * Math.cos(angleJ);
+    const y2 = cy + r * Math.sin(angleJ);
+    const cls = bothHaveDish ? 'pair-active' : '';
+    lines += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${cls}"/>`;
+  }
+  svg.innerHTML = lines;
+}
+
+function showDishTooltip(e, dish) {
+  const tooltip = document.getElementById('tooltip');
+  let content = `<strong>${dish.name}</strong> <span style="color:#ffd700">${dish.satiety}</span>`;
+  content += `<br><span style="color:#aaa">${dish.flavors.join('/')} · ${dish.category}</span>`;
+  if (dish.effect.type !== EffectType.NONE && dish.effect.desc) {
+    content += `<br><em style="color:#4ecdc4">⚡ ${dish.effect.desc}</em>`;
+  }
+  tooltip.innerHTML = content;
+  tooltip.classList.add('show');
+  tooltip.style.left = (e.clientX + 14) + 'px';
+  tooltip.style.top = (e.clientY - 10) + 'px';
+}
+function moveDishTooltip(e) {
+  const tooltip = document.getElementById('tooltip');
+  tooltip.style.left = (e.clientX + 14) + 'px';
+  tooltip.style.top = (e.clientY - 10) + 'px';
+}
+function hideDishTooltip() {
+  document.getElementById('tooltip').classList.remove('show');
+}
+
+function updateComboBadge(el, combo) {
+  const m = combo.multiplier;
+  const FLAVOR_ICON = { '咸鲜': '🧂', '甜': '🍬', '酸': '🍋', '辣': '🌶' };
+  let text = `×${m}`;
+  if (combo.lastFlavors && m >= 2) {
+    text += ' ' + combo.lastFlavors.map(f => FLAVOR_ICON[f] || '').join('');
+  }
+  el.textContent = text;
+  el.classList.remove('active', 'max');
+  if (m >= 3) el.classList.add('max');
+  else if (m >= 2) el.classList.add('active');
+}
+
+function renderStatus() {
+  const pFill = document.getElementById('player-satiety-fill');
+  const nFill = document.getElementById('npc-satiety-fill');
+  pFill.style.width = (game.playerSatiety / MAX_SATIETY * 100) + '%';
+  nFill.style.width = (game.npcSatiety / MAX_SATIETY * 100) + '%';
+  document.getElementById('player-satiety-text').textContent = `${game.playerSatiety}/${MAX_SATIETY}`;
+  document.getElementById('npc-satiety-text').textContent = `${game.npcSatiety}/${MAX_SATIETY}`;
+
+  document.getElementById('turn-num').textContent = game.turn;
+
+  const phaseNames = {
+    'player_action': '你的回合',
+    'npc_action': 'NPC回合...',
+    'refill': '补菜中...',
+    'game_over': '对决结束',
+  };
+  document.getElementById('phase-text').textContent = phaseNames[game.phase] || '';
+
+  // AP dots
+  const apContainer = document.getElementById('ap-display');
+  apContainer.innerHTML = '';
+  const isNpc = game.phase === 'npc_action';
+  for (let i = 0; i < AP_PER_TURN; i++) {
+    const dot = document.createElement('div');
+    dot.className = `ap-dot ${isNpc ? 'npc-dot' : ''} ${i < game.ap ? 'filled' : ''}`;
+    apContainer.appendChild(dot);
+  }
+
+  // Profile active turn highlight
+  document.getElementById('profile-player').classList.toggle('active-turn', game.phase === 'player_action');
+  document.getElementById('profile-npc').classList.toggle('active-turn', game.phase === 'npc_action');
+
+  // Buttons
+  const canAct = game.phase === 'player_action' && game.ap > 0 && !game.result;
+  document.getElementById('btn-end-turn').disabled = game.phase !== 'player_action' || !!game.result;
+
+  // Drag hint
+  const hint = document.getElementById('action-hint');
+  const tableCircle = document.getElementById('table-circle');
+  if (canAct) {
+    hint.textContent = `拖动圆盘旋转 | AP: ${game.ap}`;
+    tableCircle.classList.remove('no-drag');
+  } else {
+    hint.textContent = game.phase === 'player_action' ? 'AP不足' : '';
+    tableCircle.classList.add('no-drag');
+  }
+
+  // Combo badges
+  const npcBadge = document.getElementById('npc-combo-badge');
+  const playerBadge = document.getElementById('player-combo-badge');
+  updateComboBadge(npcBadge, game.npcCombo);
+  updateComboBadge(playerBadge, game.playerCombo);
+}
+
+function renderLog() {
+  const list = document.getElementById('log-list');
+  list.innerHTML = '';
+  const entries = game.log.slice(-30);
+  entries.forEach(text => {
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    if (text.includes('NPC吃到') || text.includes('玩家吃到')) div.className += ' damage';
+    if (text.includes('连击')) div.className += ' combo';
+    if (text.includes('饱食度-') || text.includes('减半')) div.className += ' heal';
+    if (text.includes('★')) div.className += ' effect';
+    if (text.includes('---') || text.includes('===')) div.className += ' turn';
+    div.textContent = text;
+    list.appendChild(div);
+  });
+  list.scrollTop = list.scrollHeight;
+}
+
+function render() {
+  renderTable();
+  renderStatus();
+  renderLog();
+
+  if (game.result) {
+    const overlay = document.getElementById('game-over-overlay');
+    const text = document.getElementById('game-over-text');
+    if (game.result === 'player_win') {
+      text.textContent = '🎉 你赢了！';
+      text.className = 'win';
+    } else {
+      text.textContent = '💀 你输了...';
+      text.className = 'lose';
+    }
+    overlay.classList.add('show');
+  }
+}
+
+// ============================================================
+// 旋转预览
+// ============================================================
+function getRotationPreview(steps) {
+  const s = ((steps % TOTAL_SLOTS) + TOTAL_SLOTS) % TOTAL_SLOTS;
+  const npcDish = game.slots[(NPC_MOUTH + s) % TOTAL_SLOTS];
+  const playerDish = game.slots[(PLAYER_MOUTH + s) % TOTAL_SLOTS];
+  return { npcDish, playerDish };
+}
+
+function renderRotationPreview(steps) {
+  const panel = document.getElementById('rotation-preview');
+  if (!steps || game.phase !== 'player_action' || game.ap < 1) {
+    panel.classList.remove('show');
+    return;
+  }
+  const { npcDish, playerDish } = getRotationPreview(steps);
+  const dir = steps > 0 ? '↻' : '↺';
+  let html = `<div class="preview-title">${dir} 转${Math.abs(steps)}格预览</div>`;
+  if (npcDish) {
+    html += `<div class="preview-row npc-eat">NPC吃到: ${npcDish.name} (饱食+${npcDish.satiety})</div>`;
+  } else {
+    html += `<div class="preview-row preview-empty">NPC嘴位: 空</div>`;
+  }
+  if (playerDish) {
+    html += `<div class="preview-row player-eat">你吃到: ${playerDish.name} (饱食+${playerDish.satiety})</div>`;
+  } else {
+    html += `<div class="preview-row preview-empty">你的嘴位: 空</div>`;
+  }
+  panel.innerHTML = html;
+  panel.classList.add('show');
+}
+
+// ============================================================
+// 伤害浮动数字
+// ============================================================
+function showDamageFloat(ringIndex, damage, isNpc) {
+  const pos = getSlotPosition(ringIndex, game.visualAngle);
+  const wrapper = document.getElementById('table-wrapper');
+  const el = document.createElement('div');
+  el.className = `damage-float ${isNpc ? 'npc-dmg' : 'player-dmg'}`;
+  el.textContent = `+${damage}`;
+  el.style.left = (pos.x + 38) + 'px';
+  el.style.top = (pos.y + 15) + 'px';
+  wrapper.appendChild(el);
+  setTimeout(() => el.remove(), 1200);
+}
+
+// ============================================================
+// 交互
+// ============================================================
+function onSlotClick(index) {
+  // No interaction — slots are read-only in pure rotation model
+}
+
+// ============================================================
+// 拖动旋转系统
+// ============================================================
+let isDragging = false;
+let lastDragAngle = 0;
+let accumulatedAngle = 0;
+let snapSteps = 0;
+
+function getRawAngle(clientX, clientY) {
+  const circle = document.getElementById('table-circle');
+  const rect = circle.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const dx = clientX - cx;
+  const dy = clientY - cy;
+  return { angle: Math.atan2(dy, dx) * 180 / Math.PI, dist: Math.hypot(dx, dy) };
+}
+
+function positionSlotsAtAngle(angleDeg) {
+  const cx = 250, cy = 250, r = 160;
+  const slotsContainer = document.getElementById('slots-container');
+  if (!slotsContainer) return;
+  const slots = slotsContainer.querySelectorAll('.table-slot');
+  slots.forEach(slot => {
+    const idx = parseInt(slot.dataset.index);
+    if (angleDeg === 0) { slot.style.transform = ''; return; }
+    const baseAngle = RING_ANGLES[idx] + game.visualAngle;
+    const newAngle = baseAngle + angleDeg;
+    const newRad = newAngle * Math.PI / 180;
+    const baseRad = baseAngle * Math.PI / 180;
+    const dx = r * Math.cos(newRad) - r * Math.cos(baseRad);
+    const dy = r * Math.sin(newRad) - r * Math.sin(baseRad);
+    slot.style.transform = `translate(${dx}px, ${dy}px)`;
+  });
+  renderPairLines(game.visualAngle + angleDeg);
+}
+
+function updateDividerLine(deg) {
+  const line = document.getElementById('divider-line');
+  line.style.transform = `translateY(-50%) rotate(${deg}deg)`;
+}
+
+let settleAnimId = null;
+
+function updateSnapIndicator(steps) {
+  const el = document.getElementById('snap-indicator');
+  if (!steps) {
+    el.innerHTML = `<div class="snap-steps zero">0</div>`;
+    el.classList.add('show');
+    return;
+  }
+  const dir = steps > 0 ? '↻' : '↺';
+  const cost = Math.abs(steps);
+  const affordable = game.ap >= cost;
+  const costColor = affordable ? '#ffd700' : '#ff4d4d';
+  const costText = affordable
+    ? `${cost} AP`
+    : `需${cost}AP / 仅剩${game.ap}AP`;
+  el.innerHTML = `<div class="snap-steps">${dir}${Math.abs(steps)}</div>` +
+    `<div class="snap-cost" style="color:${costColor};font-size:13px;font-weight:bold;margin:2px 0">${costText}</div>`;
+  el.classList.add('show');
+}
+
+function hideSnapIndicator() {
+  document.getElementById('snap-indicator').classList.remove('show');
+}
+
+function animateSettle(fromAngle, toAngle, onComplete) {
+  if (settleAnimId) cancelAnimationFrame(settleAnimId);
+  const duration = 150;
+  const startTime = performance.now();
+  function tick(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const angle = fromAngle + (toAngle - fromAngle) * eased;
+    positionSlotsAtAngle(angle);
+    updateDividerLine(game.visualAngle + angle);
+    if (t < 1) { settleAnimId = requestAnimationFrame(tick); }
+    else { settleAnimId = null; onComplete(); }
+  }
+  settleAnimId = requestAnimationFrame(tick);
+}
+
+function onDragStart(e) {
+  if (game.phase !== 'player_action' || game.ap < 1 || game.result) return;
+  if (e.target.closest && e.target.closest('.table-slot')) return;
+
+  e.preventDefault();
+  const pt = e.touches ? e.touches[0] : e;
+  const { angle, dist } = getRawAngle(pt.clientX, pt.clientY);
+  if (dist < 40) return;
+  if (settleAnimId) { cancelAnimationFrame(settleAnimId); settleAnimId = null; }
+
+  isDragging = true;
+  lastDragAngle = angle;
+  accumulatedAngle = 0;
+  snapSteps = 0;
+  document.getElementById('table-circle').classList.add('dragging');
+}
+
+function onDragMove(e) {
+  if (!isDragging) return;
+  e.preventDefault();
+  const pt = e.touches ? e.touches[0] : e;
+  const { angle: currentAngle, dist } = getRawAngle(pt.clientX, pt.clientY);
+  if (dist < 40) return;
+
+  let frameDelta = currentAngle - lastDragAngle;
+  if (frameDelta > 180) frameDelta -= 360;
+  if (frameDelta < -180) frameDelta += 360;
+  lastDragAngle = currentAngle;
+  accumulatedAngle += frameDelta;
+
+  const clampedAngle = Math.max(-180, Math.min(180, accumulatedAngle));
+  positionSlotsAtAngle(clampedAngle);
+  updateDividerLine(game.visualAngle + clampedAngle);
+
+  const sign = clampedAngle >= 0 ? 1 : -1;
+  const absAngle = Math.abs(clampedAngle);
+  const newSnap = sign * Math.min(MAX_ROTATION_STEPS, Math.floor(absAngle / 36));
+  if (newSnap !== snapSteps) {
+    snapSteps = newSnap;
+    const el = document.getElementById('snap-indicator');
+    el.style.transition = 'none';
+    el.style.transform = 'translate(-50%, -50%) scale(1.2)';
+    requestAnimationFrame(() => {
+      el.style.transition = 'transform 0.15s ease-out';
+      el.style.transform = 'translate(-50%, -50%) scale(1)';
+    });
+  }
+  updateSnapIndicator(snapSteps);
+}
+
+function onDragEnd(e) {
+  if (!isDragging) return;
+  isDragging = false;
+  hideSnapIndicator();
+
+  document.getElementById('table-circle').classList.remove('dragging');
+
+  const currentVisualAngle = Math.max(-180, Math.min(180, accumulatedAngle));
+  // If player tried to commit a rotation they can't afford, snap back to 0
+  const affordable = Math.abs(snapSteps) <= game.ap;
+  const finalSnap = affordable ? snapSteps : 0;
+  const targetAngle = finalSnap * 36;
+  const committedSteps = finalSnap;
+  if (!affordable && snapSteps !== 0) {
+    game.log.push(`AP不足（需${Math.abs(snapSteps)}AP/仅剩${game.ap}AP），转桌取消`);
+  }
+
+  animateSettle(currentVisualAngle, targetAngle, () => {
+    positionSlotsAtAngle(0);
+    game.visualAngle = 0;
+    updateDividerLine(0);
+
+    if (committedSteps !== 0) {
+      const report = doRotate(game, committedSteps);
+      render();
+
+      if (report) {
+        for (const eat of report.npcAte) showDamageFloat(NPC_MOUTH, eat.damage, true);
+        for (const eat of report.playerAte) showDamageFloat(PLAYER_MOUTH, eat.damage, false);
+      }
+
+      if (game.ap <= 0 && !game.result) {
+        setTimeout(() => onEndTurn(), 800);
+      }
+    }
+  });
+
+  snapSteps = 0;
+  accumulatedAngle = 0;
+}
+
+function initDragEvents() {
+  const circle = document.getElementById('table-circle');
+  circle.addEventListener('mousedown', onDragStart);
+  window.addEventListener('mousemove', onDragMove);
+  window.addEventListener('mouseup', onDragEnd);
+  circle.addEventListener('touchstart', onDragStart, { passive: false });
+  window.addEventListener('touchmove', onDragMove, { passive: false });
+  window.addEventListener('touchend', onDragEnd);
+}
+
+// ============================================================
+// 回合控制
+// ============================================================
+function onEndTurn() {
+  if (game.phase !== 'player_action' || game.result) return;
+  endPlayerTurn(game);
+  render();
+
+  // NPC turn after delay
+  setTimeout(() => {
+    npcTurn(game);
+    render();
+
+    // Then refill and start next player turn
+    setTimeout(() => {
+      if (!game.result) {
+        endNpcTurn(game);
+        render();
+      }
+    }, 600);
+  }, 600);
+}
+
+function restartGame() {
+  document.getElementById('game-over-overlay').classList.remove('show');
+  startGame();
+}
+
+function startGame() {
+  game = initGame();
+  render();
+}
+
+startGame();
+initDragEvents();
+</script>
+</body>
+</html>
